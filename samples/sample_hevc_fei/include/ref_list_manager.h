@@ -21,6 +21,7 @@ or https://software.intel.com/en-us/media-client-solutions-support.
 
 #include <assert.h>
 #include <algorithm>
+#include <fstream>
 #include "mfxstructures.h"
 #include "sample_hevc_fei_defs.h"
 
@@ -106,7 +107,7 @@ public:
         Fill(m_lastTask.m_dpb[TASK_DPB_BEFORE], IDX_INVALID);
     }
 
-    ~EncodeOrderControl()
+    virtual ~EncodeOrderControl()
     {
     }
 
@@ -127,7 +128,7 @@ public:
         std::fill(m_ds_pSurf.begin(), m_ds_pSurf.end(), (mfxFrameSurface1*)NULL);
     }
 
-    HevcTask* GetTask(mfxFrameSurface1 * surface)
+    virtual HevcTask* GetTask(mfxFrameSurface1 * surface)
     {
         HevcTask* task = ReorderFrame(surface);
         if (task)
@@ -156,6 +157,8 @@ public:
             }
         }
     }
+
+    friend class EncodeOrderExtControl;
 
 private:
     HevcTask* ReorderFrame(mfxFrameSurface1* in);
@@ -186,4 +189,74 @@ private:
 
 private:
     DISALLOW_COPY_AND_ASSIGN(EncodeOrderControl);
+};
+
+class EncodeOrderExtControl : public EncodeOrderControl
+{
+public:
+    EncodeOrderExtControl(const MfxVideoParamsWrapper & par, bool bIsPreENC, const char* filename) :
+        EncodeOrderControl(par, bIsPreENC)
+    {
+        m_pRefLIn.open(filename, std::ifstream::in);
+    }
+
+    ~EncodeOrderExtControl() override
+    {
+        if (m_pRefLIn.is_open())
+            m_pRefLIn.close();
+    }
+
+    inline
+    mfxStatus State() const
+    {
+        return m_pRefLIn.is_open() ? MFX_ERR_NONE : MFX_ERR_NOT_FOUND;
+    }
+
+    virtual HevcTask* GetTask(mfxFrameSurface1 * surface) override
+    {
+        if (Load() != MFX_ERR_NONE)
+            return nullptr;
+        HevcTask* task = ReorderFrame(surface);
+        if (task)
+        {
+            ConstructRPL(*task);
+        }
+        return task;
+    }
+
+    HevcTask* ReorderFrame(mfxFrameSurface1* in);
+    void ConstructRPL(HevcTask & task);
+
+private:
+    struct Frame
+    {
+        Frame()
+            : order(-1)
+            , cOrder(~0)
+            , type(0)
+            , picStruct(0)
+        {
+            refLists = { { MFX_EXTBUFF_HEVC_REFLISTS, sizeof(mfxExtHEVCRefLists) }, };
+        }
+
+        mfxI32 order; // display order
+        mfxU32 cOrder; // coding order, == position in m_FrameInfo
+        mfxU16 type;
+        mfxU16 picStruct;
+        mfxExtHEVCRefLists refLists;
+
+        inline bool isField() const { return (picStruct & (MFX_PICSTRUCT_FIELD_TFF | MFX_PICSTRUCT_FIELD_BFF)); }
+    };
+
+    bool bReady = false;
+    std::vector<Frame> m_FrameInfo;
+    std::ifstream m_pRefLIn;
+
+    std::vector<Frame>::const_iterator FrameByDisplayOrder(mfxI32 dispOrder) const
+    {
+        return std::find_if(m_FrameInfo.cbegin(), m_FrameInfo.cend(), [=](const Frame& fr) {return fr.order == dispOrder; });
+    }
+
+    mfxStatus Load();
+
 };

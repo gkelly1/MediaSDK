@@ -1321,7 +1321,7 @@ void MfxVideoParam::SyncMfxToHeadersParam(mfxU32 numSlicesForSTRPSOpt)
 
 
     slo.max_dec_pic_buffering_minus1    = mfx.NumRefFrame;
-    slo.max_num_reorder_pics            = GetNumReorderFrames(mfx.GopRefDist - 1, isBPyramid(),isField());
+    slo.max_num_reorder_pics            = Min(GetNumReorderFrames(mfx.GopRefDist - 1, isBPyramid(),isField()), slo.max_dec_pic_buffering_minus1);
     slo.max_latency_increase_plus1      = 0;
 
     Zero(m_sps);
@@ -1580,9 +1580,10 @@ void MfxVideoParam::SyncMfxToHeadersParam(mfxU32 numSlicesForSTRPSOpt)
     }
 
     m_sps.vui.field_seq_flag = isField();
-    if (IsOn(m_ext.CO.PicTimingSEI))
+    if (m_sps.vui.field_seq_flag
+        || (m_vps.general.progressive_source_flag && m_vps.general.interlaced_source_flag))
     {
-        m_sps.vui.frame_field_info_present_flag = 1;
+        m_sps.vui.frame_field_info_present_flag = 1; // spec requirement
     }
 
     if (IsOn(m_ext.CO.VuiNalHrdParameters))
